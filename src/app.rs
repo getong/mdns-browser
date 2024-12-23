@@ -1,6 +1,8 @@
 use chrono::{DateTime, Local};
 use error::Error;
 use futures::{select, StreamExt};
+use leptos::prelude::*;
+use leptos::task::spawn_local;
 use leptos::*;
 use leptos_meta::provide_meta_context;
 use leptos_meta::Style;
@@ -11,21 +13,36 @@ use shared_constants::{
     SPLASH_SCREEN_DURATION, VERIFY_TIMEOUT,
 };
 use std::collections::HashSet;
-use std::time::Duration;
 use strsim::jaro_winkler;
 use tauri_sys::core::invoke;
 use tauri_sys::event::listen;
-use thaw::mobile::{show_toast, ToastOptions};
+use thaw::Accordion;
+use thaw::AccordionHeader;
+use thaw::AccordionItem;
+use thaw::Body1;
+use thaw::ButtonAppearance;
+use thaw::ButtonShape;
+use thaw::CardHeader;
+use thaw::ConfigProvider;
+use thaw::Dialog;
+use thaw::DialogBody;
+use thaw::DialogSurface;
+use thaw::DialogTitle;
+use thaw::Toast;
+use thaw::ToastBody;
+use thaw::ToastTitle;
+use thaw::ToasterInjection;
+use thaw::ToasterProvider;
 use thaw::{
-    AutoComplete, AutoCompleteOption, AutoCompleteRef, AutoCompleteSuffix, Button, ButtonColor,
-    ButtonSize, ButtonVariant, Card, CardFooter, CardHeaderExtra, Collapse, CollapseItem,
-    ComponentRef, GlobalStyle, Grid, GridItem, Icon, Input, Layout, Modal, Select, SelectOption,
-    Space, SpaceAlign, SpaceGap, SpaceJustify, Table, Text, Theme, ThemeProvider,
+    AutoComplete, AutoCompleteOption, AutoCompleteRef, Button, ButtonSize, Card, CardFooter,
+    ComponentRef, Grid, GridItem, Input, Layout, Select, Space, SpaceAlign, SpaceGap, SpaceJustify,
+    Table, Text, Theme,
 };
 use thaw_utils::Model;
 
 async fn invoke_no_args(cmd: &str) {
     log::debug!("Invoke no args `{cmd}`");
+
     let _ = invoke::<()>(cmd, &()).await;
 }
 
@@ -184,41 +201,37 @@ async fn verify_instance(instance_fullname: String) {
         &VerifyArgs {
             instanceFullname: &instance_fullname,
         },
-    )
-    .await;
+    );
 }
 
 /// Component to render a string vector into a table
 #[component]
 fn ValuesTable(values: Vec<String>, #[prop(into)] title: String) -> impl IntoView {
     log::debug!("ValuesTable");
-    if values.is_empty() {
-        view! { <p></p> }.into_view()
-    } else {
-        view! {
-            <Table>
-                <thead>
-                    <tr>
-                        <th>{title}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {values
-                        .into_iter()
-                        .map(|n| {
-                            view! {
-                                <tr>
-                                    <td>
-                                        <ToClipBoardCopyable text=Some(n) />
-                                    </td>
-                                </tr>
-                            }
-                        })
-                        .collect::<Vec<_>>()}
-                </tbody>
-            </Table>
-            <Style>
-                "
+    view! {
+        <Table>
+            <thead>
+                <tr>
+                    <th>{title}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {values
+                    .into_iter()
+                    .map(|n| {
+                        view! {
+                            <tr>
+                                <td>
+                                    <ToClipBoardCopyable text=Some(n) />
+                                </td>
+                            </tr>
+                        }
+                    })
+                    .collect::<Vec<_>>()}
+            </tbody>
+        </Table>
+        <Style>
+            "
                 td
                 {
                     max-width: 70vw;
@@ -227,10 +240,9 @@ fn ValuesTable(values: Vec<String>, #[prop(into)] title: String) -> impl IntoVie
                     white-space: nowrap;
                 }
                 "
-            </Style>
-        }
-        .into_view()
+        </Style>
     }
+    .into_view()
 }
 
 fn get_instance_name(input: &str) -> String {
@@ -271,17 +283,17 @@ fn get_prefix(s: &str) -> &str {
 #[component]
 fn AutoCompleteServiceType(
     #[prop(optional, into)] value: Model<String>,
-    #[prop(optional, into)] disabled: MaybeSignal<bool>,
-    #[prop(optional, into)] invalid: MaybeSignal<bool>,
+    #[prop(optional, into)] disabled: Signal<bool>,
+    #[prop(optional, into)] invalid: Signal<bool>,
     #[prop(optional, into)] comp_ref: ComponentRef<AutoCompleteRef>,
 ) -> impl IntoView {
     let service_types = use_context::<ServiceTypesSignal>()
         .expect("service_tyxpes context to exist")
         .0;
 
-    create_resource(move || service_types, listen_on_service_type_events);
+    LocalResource::new(move || listen_on_service_type_events(service_types));
 
-    let service_type_options = create_memo(move |_| {
+    let service_type_options = Memo::<Vec<_>>::new(move |_| {
         service_types
             .get()
             .into_iter()
@@ -294,10 +306,7 @@ fn AutoCompleteServiceType(
                 let prefix = get_prefix(s.split('.').next().unwrap_or(s));
                 jaro_winkler(lookup, prefix) >= 0.75 || is_subsequence(lookup, prefix)
             })
-            .map(|service_type| AutoCompleteOption {
-                label: service_type.clone(),
-                value: service_type.clone(),
-            })
+            .map(|service_type| (format!("{service_type}"), format!("{service_type}")))
             .collect()
     });
 
@@ -305,15 +314,19 @@ fn AutoCompleteServiceType(
         <AutoComplete
             value=value
             disabled=disabled
-            invalid=invalid
-            options=service_type_options
             placeholder="Service type..."
             comp_ref=comp_ref
             attr:autocapitalize="none"
         >
-            <AutoCompleteSuffix slot>
-                <Icon icon=icondata::MdiSearchWeb />
-            </AutoCompleteSuffix>
+            <For
+                each=move || service_type_options.get()
+                key=|option| option.0.clone()
+                let:option
+            >
+                <AutoCompleteOption value=option.0>
+                    {option.1}
+                </AutoCompleteOption>
+            </For>
         </AutoComplete>
     }
 }
@@ -322,13 +335,11 @@ fn AutoCompleteServiceType(
 #[component]
 fn ToClipBoardCopyable(
     text: Option<String>,
-    #[prop(optional, into)] disabled: MaybeSignal<bool>,
+    #[prop(optional, into)] disabled: Signal<bool>,
 ) -> impl IntoView {
-    let (text_to_copy, _) = create_signal(text.clone().unwrap_or_default());
-    let copy_to_clipboard_action = create_action(|input: &String| {
-        let input = input.clone();
-        async move { copy_to_clipboard(input.clone()).await }
-    });
+    let (text_to_copy, _) = signal(text.clone().unwrap_or_default());
+    let copy_to_clipboard_action =
+        Action::new(|input: &String| copy_to_clipboard(input.to_owned()));
 
     let on_copy_to_clibboard_click = move |_| {
         let text = text_to_copy.get();
@@ -339,9 +350,9 @@ fn ToClipBoardCopyable(
         <Button
             disabled=disabled
             on_click=on_copy_to_clibboard_click
-            color=ButtonColor::Success
-            variant=ButtonVariant::Text
-            size=ButtonSize::Tiny
+            appearance=ButtonAppearance::Subtle
+            shape=ButtonShape::Rounded
+            size=ButtonSize::Small
             icon=icondata::MdiClipboardText
         />
         {text}
@@ -353,34 +364,41 @@ fn ToClipBoardCopyable(
 fn CopyToClipBoardButton(
     text: Option<String>,
     button_text: Option<String>,
-    #[prop(optional, into)] disabled: MaybeSignal<bool>,
+    #[prop(optional, into)] disabled: Signal<bool>,
 ) -> impl IntoView {
     let is_desktop = use_context::<IsDesktopSignal>()
         .expect("is_desktop context to exist")
         .0;
-    let (text_to_copy, _) = create_signal(text.clone().unwrap_or_default());
-    let copy_to_clipboard_action = create_action(|input: &String| {
-        let input = input.clone();
-        async move { copy_to_clipboard(input.clone()).await }
-    });
+    let (text_to_copy, _) = signal(text.clone().unwrap_or_default());
+    let copy_to_clipboard_action =
+        Action::new(|input: &String| copy_to_clipboard(input.to_owned()));
 
+    let toaster = ToasterInjection::expect_context();
     let on_copy_to_clipboard_click = move |_| {
         let text = text_to_copy.get_untracked();
         copy_to_clipboard_action.dispatch(text.clone());
         if is_desktop.get_untracked() {
-            show_toast(ToastOptions {
-                message: format!("Copied {} to clipboard", text),
-                duration: Duration::from_millis(2000),
-            });
+            toaster.dispatch_toast(
+                move || {
+                    view! {
+                        <Toast>
+                            <ToastTitle>"Clipboard"</ToastTitle>
+                            <ToastBody>
+                             format!("Copied {} to clipboard", text)
+                            </ToastBody>
+                        </Toast>
+                    }
+                },
+                Default::default(),
+            );
         }
     };
-
     view! {
         <Button
             disabled=disabled
             on_click=on_copy_to_clipboard_click
-            color=ButtonColor::Success
-            variant=ButtonVariant::Outlined
+            appearance=ButtonAppearance::Subtle
+            shape=ButtonShape::Rounded
             size=ButtonSize::Small
         >
             {button_text}
@@ -399,9 +417,9 @@ async fn copy_to_clipboard(contents: String) {
         &CopyToClipboardArgs {
             contents: &contents,
         },
-    )
-    .await;
+    );
 }
+
 fn drop_trailing_dot(fqn: &str) -> String {
     fqn.strip_suffix(".").unwrap_or(fqn).to_owned()
 }
@@ -416,12 +434,10 @@ fn drop_local_and_last_dot(fqn: &str) -> String {
 fn ResolvedServiceGridItem(resolved_service: ResolvedService) -> impl IntoView {
     log::debug!("ResolvedServiceGridItem");
 
-    let instance_fullname = create_rw_signal(resolved_service.instance_name.clone());
-    let verify_action = create_action(|instance_fullname: &String| {
-        let instance_fullname = instance_fullname.clone();
-        async move { verify_instance(instance_fullname.clone()).await }
-    });
-    let verifying = create_rw_signal(false);
+    let instance_fullname = RwSignal::new(resolved_service.instance_name.clone());
+    let verify_action =
+        Action::new(|instance_fullname: &String| verify_instance(instance_fullname.to_owned()));
+    let verifying = RwSignal::new(false);
     let on_verify_click = move |_| {
         verifying.set(true);
         verify_action.dispatch(instance_fullname.get_untracked());
@@ -458,7 +474,7 @@ fn ResolvedServiceGridItem(resolved_service: ResolvedService) -> impl IntoView {
 
     let card_title = get_instance_name(resolved_service.instance_name.as_str());
     let details_title = card_title.clone();
-    let show_details = create_rw_signal(false);
+    let show_details = RwSignal::new(false);
     let addrs_footer = if resolved_service.dead {
         vec![]
     } else {
@@ -466,10 +482,11 @@ fn ResolvedServiceGridItem(resolved_service: ResolvedService) -> impl IntoView {
     };
     view! {
         <GridItem>
-            <Card title=card_title>
-                <CardHeaderExtra slot>
-                    {as_local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()}
-                </CardHeaderExtra>
+            <Card>
+                <CardHeader>
+                <Body1>
+                    <b>{card_title}</b>{as_local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()}
+                </Body1>
                 <Space vertical=true>
                     <Space align=SpaceAlign::Center justify=SpaceJustify::Center>
                         <CopyToClipBoardButton
@@ -484,18 +501,24 @@ fn ResolvedServiceGridItem(resolved_service: ResolvedService) -> impl IntoView {
                         />
                         <Button
                             size=ButtonSize::Small
-                            variant=ButtonVariant::Outlined
+                            appearance=ButtonAppearance::Subtle
+                            shape=ButtonShape::Rounded
                             disabled=resolved_service.dead
                             on_click=move |_| show_details.set(true)
                             icon=icondata::MdiListBox
                         >
                             "Details"
                         </Button>
-                        <Modal width="90vw" title=details_title show=show_details>
-                            <ValuesTable values=subtype title="subtype" />
-                            <ValuesTable values=addrs title="IPs" />
-                            <ValuesTable values=txts title="txt" />
-                        </Modal>
+                        <Dialog open=show_details>
+                            <DialogSurface>
+                                <DialogBody>
+                                <DialogTitle>{details_title}</DialogTitle>
+                                    <ValuesTable values=subtype title="subtype" />
+                                    <ValuesTable values=addrs title="IPs" />
+                                    <ValuesTable values=txts title="txt" />
+                                </DialogBody>
+                            </DialogSurface>
+                        </Dialog>
                     </Space>
                     <Space align=SpaceAlign::Center justify=SpaceJustify::Center>
                         <CopyToClipBoardButton
@@ -506,7 +529,8 @@ fn ResolvedServiceGridItem(resolved_service: ResolvedService) -> impl IntoView {
                         <Button
                             loading=verifying
                             size=ButtonSize::Small
-                            variant=ButtonVariant::Outlined
+                            appearance=ButtonAppearance::Subtle
+                            shape=ButtonShape::Rounded
                             on_click=on_verify_click
                             disabled=resolved_service.dead
                             icon=icondata::MdiCheckAll
@@ -515,7 +539,8 @@ fn ResolvedServiceGridItem(resolved_service: ResolvedService) -> impl IntoView {
                         </Button>
                     </Space>
                 </Space>
-                <CardFooter slot>
+                </CardHeader>
+                <CardFooter>
                     <CopyToClipBoardButton
                         text=addrs_footer.first().cloned()
                         button_text=addrs_footer.first().cloned()
@@ -545,12 +570,12 @@ pub enum SortKind {
 /// Component that allows for mdns browsing using events
 #[component]
 fn Browse() -> impl IntoView {
-    let service_types = create_rw_signal(ServiceTypes::new());
+    let service_types = RwSignal::new(ServiceTypes::new());
     provide_context(ServiceTypesSignal(service_types));
 
-    let (resolved, set_resolved) = create_signal(ResolvedServices::new());
-    let (sort_kind, set_sort_kind) = create_signal(SortKind::HostnameAsc);
-    let sorted_resolved = create_memo(move |_| {
+    let (resolved, set_resolved) = signal(ResolvedServices::new());
+    let (sort_kind, set_sort_kind) = signal(SortKind::HostnameAsc);
+    let sorted_resolved = Memo::new(move |_| {
         let mut sorted = resolved.get().clone();
         match sort_kind.get() {
             SortKind::HostnameAsc => sorted.sort_by(|a, b| match a.hostname.cmp(&b.hostname) {
@@ -570,21 +595,11 @@ fn Browse() -> impl IntoView {
         }
         sorted
     });
-    let sort_options = vec![
-        SelectOption::new("Hostname (Ascending)", String::from("HostnameAsc")),
-        SelectOption::new("Hostname (Descending)", String::from("HostnameDesc")),
-        SelectOption::new("Instance (Ascending)", String::from("InstanceAsc")),
-        SelectOption::new("Instance (Descending)", String::from("InstanceDesc")),
-        SelectOption::new("Service Type (Ascending)", String::from("ServiceTypeAsc")),
-        SelectOption::new("Service Type (Descending)", String::from("ServiceTypeDesc")),
-        SelectOption::new("Last Updated (Ascending)", String::from("TimestampAsc")),
-        SelectOption::new("Last Updated (Descending)", String::from("TimestampDesc")),
-    ];
-    let sort_value = create_rw_signal(Some("HostnameAsc".to_string()));
+    let sort_value = RwSignal::new("HostnameAsc".to_string());
 
-    let query = create_rw_signal(String::new());
+    let query = RwSignal::new(String::new());
 
-    let filtered_services = create_memo(move |_| {
+    let filtered_services = Memo::new(move |_| {
         let query = query.get();
         sorted_resolved
             .get()
@@ -594,31 +609,27 @@ fn Browse() -> impl IntoView {
             .collect::<Vec<_>>()
     });
 
-    create_effect(move |_| {
-        if let Some(value) = sort_value.get() {
-            match value.as_str() {
-                "HostnameAsc" => set_sort_kind.set(SortKind::HostnameAsc),
-                "HostnameDesc" => set_sort_kind.set(SortKind::HostnameDesc),
-                "InstanceAsc" => set_sort_kind.set(SortKind::InstanceAsc),
-                "InstanceDesc" => set_sort_kind.set(SortKind::InstanceDesc),
-                "ServiceTypeAsc" => set_sort_kind.set(SortKind::ServiceTypeAsc),
-                "ServiceTypeDesc" => set_sort_kind.set(SortKind::ServiceTypeDesc),
-                "TimestampAsc" => set_sort_kind.set(SortKind::TimestampAsc),
-                "TimestampDesc" => set_sort_kind.set(SortKind::TimestampDesc),
-                _ => {}
-            }
-        }
+    Effect::new(move |_| match sort_value.get().as_str() {
+        "HostnameAsc" => set_sort_kind.set(SortKind::HostnameAsc),
+        "HostnameDesc" => set_sort_kind.set(SortKind::HostnameDesc),
+        "InstanceAsc" => set_sort_kind.set(SortKind::InstanceAsc),
+        "InstanceDesc" => set_sort_kind.set(SortKind::InstanceDesc),
+        "ServiceTypeAsc" => set_sort_kind.set(SortKind::ServiceTypeAsc),
+        "ServiceTypeDesc" => set_sort_kind.set(SortKind::ServiceTypeDesc),
+        "TimestampAsc" => set_sort_kind.set(SortKind::TimestampAsc),
+        "TimestampDesc" => set_sort_kind.set(SortKind::TimestampDesc),
+        _ => {}
     });
-    create_resource(move || set_resolved, listen_on_resolve_events);
+    LocalResource::new(move || listen_on_resolve_events(set_resolved));
 
     let is_desktop = use_context::<IsDesktopSignal>()
         .expect("is_desktop context to exist")
         .0;
 
-    let browsing = create_rw_signal(false);
-    let service_type = create_rw_signal(String::new());
+    let browsing = RwSignal::new(false);
+    let service_type = RwSignal::new(String::new());
     let not_browsing = Signal::derive(move || !browsing.get());
-    let service_type_invalid = create_memo(move |_| {
+    let service_type_invalid = Memo::new(move |_| {
         // TODO: report a meaningful error to the user
         check_service_type_fully_qualified(service_type.get().clone().as_str()).is_err()
     });
@@ -635,27 +646,21 @@ fn Browse() -> impl IntoView {
         }
     });
 
-    let browse_many_action = create_action(|input: &ServiceTypes| {
-        let input = input.clone();
-        async move { browse_many(input.clone()).await }
-    });
+    let browse_many_action = Action::new(|input: &ServiceTypes| browse_many(input.to_owned()));
 
-    let browse_action = create_action(|input: &String| {
-        let input = input.clone();
-        async move { browse(input.clone()).await }
-    });
+    let browse_action = Action::new(|input: &String| browse(input.to_owned()));
 
     let on_browse_click = move |_| {
         browsing.set(true);
         let value = service_type.get_untracked();
         if value.is_empty() {
-            browse_many_action.dispatch(service_types.get_untracked())
+            browse_many_action.dispatch(service_types.get_untracked());
         } else {
             browse_action.dispatch(value);
         }
     };
 
-    let stop_browsing_action = create_action(|_| async move { stop_browse().await });
+    let stop_browsing_action = Action::new(|_| async move { stop_browse().await });
 
     let comp_ref = ComponentRef::<AutoCompleteRef>::new();
 
@@ -669,7 +674,7 @@ fn Browse() -> impl IntoView {
         }
     };
 
-    create_effect(move |_| {
+    Effect::new(move |_| {
         spawn_local(async move {
             set_timeout(
                 move || {
@@ -683,7 +688,7 @@ fn Browse() -> impl IntoView {
     });
 
     view! {
-        <Layout style="padding: 10px;">
+        <Layout>
             <Space vertical=true gap=SpaceGap::Small>
                 <Space align=SpaceAlign::Center gap=SpaceGap::Small>
                     <Layout class=auto_complete_class>
@@ -703,7 +708,16 @@ fn Browse() -> impl IntoView {
                 </Space>
                 <Space gap=SpaceGap::Small align=SpaceAlign::Center>
                     <Text>"Sort by"</Text>
-                    <Select value=sort_value options=sort_options />
+                    <Select default_value="HostnameAsc" value=sort_value>
+                        <option label="Hostname (Ascending)"      value="HostnameAsc"/>
+                        <option label="Hostname (Descending)"     value="HostnameDesc"/>
+                        <option label="Instance (Ascending)"      value="InstanceAsc"/>
+                        <option label="Instance (Descending)"     value="InstanceDesc"/>
+                        <option label="Service Type (Ascending)"  value="ServiceTypeAsc"/>
+                        <option label="Service Type (Descending)" value="ServiceTypeDesc"/>
+                        <option label="Last Updated (Ascending)"  value="TimestampAsc"/>
+                        <option label="Last Updated (Descending)" value="TimestampDesc"/>
+                    </Select>
                     <Input value=query placeholder="Quick filter" attr:autocapitalize="none" />
                 </Space>
             </Space>
@@ -756,7 +770,7 @@ async fn fetch_update() -> Option<UpdateMetadata> {
 }
 
 async fn install_update() {
-    invoke_no_args("install_update").await;
+    invoke_no_args("install_update");
 }
 
 #[derive(Serialize, Deserialize)]
@@ -766,7 +780,7 @@ struct OpenArgs<'a> {
 
 async fn open_url(url: &str) {
     log::debug!("Opening {url}");
-    let _ = invoke::<()>("open_url", &OpenArgs { url }).await;
+    let _ = invoke::<()>("open_url", &OpenArgs { url });
 }
 
 async fn get_version(writer: WriteSignal<String>) {
@@ -785,13 +799,13 @@ async fn get_can_auto_update(writer: WriteSignal<bool>) {
 #[component]
 pub fn About() -> impl IntoView {
     log::debug!("About");
-    let (version, set_version) = create_signal(String::new());
-    let (update, set_update) = create_signal(None);
-    let (can_auto_update, set_can_auto_update) = create_signal(false);
-    create_resource(move || set_version, get_version);
-    create_resource(move || set_can_auto_update, get_can_auto_update);
+    let (version, set_version) = signal(String::new());
+    let (update, set_update) = signal(None::<UpdateMetadata>);
+    let (can_auto_update, set_can_auto_update) = signal(false);
+    LocalResource::new(move || get_version(set_version));
+    LocalResource::new(move || get_can_auto_update(set_can_auto_update));
 
-    let show_no_update = create_rw_signal(false);
+    let show_no_update = RwSignal::new(false);
     let show_no_update_with_timeout = move || {
         show_no_update.set(true);
         set_timeout(
@@ -802,30 +816,26 @@ pub fn About() -> impl IntoView {
         );
     };
 
-    let fetch_update_action = create_action(move |_: &()| async move {
-        let update = fetch_update().await;
-        log::debug!("Got update: {:?}", update);
-        if update.is_none() {
-            show_no_update_with_timeout();
-        }
-        set_update.set(update);
-    });
+    // let fetch_update_action = Action::new(|_: &()| async move {
+    //     let update = fetch_update().await;
+    //     if update.is_none() {
+    //         show_no_update_with_timeout();
+    //     }
+    //     set_update.set(update);
+    // });
 
-    let install_update_action = create_action(move |_: &()| async move {
-        install_update().await;
-    });
-
+    let install_update_action = Action::new(move |_: &()| install_update());
     let update_available = Signal::derive(move || update.get().is_some());
-    let installable_version = Signal::derive(move || {
-        update
-            .get()
-            .map_or_else(|| None, |metadata| Some(metadata.version))
-    });
+    // let installable_version = Signal::derive(move || {
+    //     update
+    //         .get()
+    //         .map_or_else(|| None, |metadata| Some(metadata.version))
+    // });
     let on_install_update_click = move |_| {
         install_update_action.dispatch(());
     };
 
-    let github_action = create_action(|action: &String| {
+    let github_action = Action::new(|action: &String| {
         let action = action.clone();
         async move { open_url(action.clone().as_str()).await }
     });
@@ -852,38 +862,41 @@ pub fn About() -> impl IntoView {
     };
 
     let on_check_update_click = move |_| {
-        fetch_update_action.dispatch(());
+        // fetch_update_action.dispatch(());
     };
     log::debug!("About view");
-    view! {
-        <Layout style="padding: 10px;">
-            <Collapse accordion=true>
-                <CollapseItem title="About" key="about">
+    let var_name = view! {
+        <Layout>
+            <Accordion multiple=true>
+                <AccordionItem value="about">
+                    <AccordionHeader slot>
+                        "About"
+                    </AccordionHeader>
                     <Space>
                         <Text>"Version "{move || version.get()}</Text>
                         <Button
-                            size=ButtonSize::Tiny
+                            size=ButtonSize::Small
                             on_click=on_release_notes_click
                             icon=icondata::MdiGithub
                         >
                             "Release Notes"
                         </Button>
                         <Button
-                            size=ButtonSize::Tiny
+                            size=ButtonSize::Small
                             on_click=on_report_issue_click
                             icon=icondata::MdiGithub
                         >
                             "Report an Issue"
                         </Button>
                         <Button
-                            size=ButtonSize::Tiny
+                            size=ButtonSize::Small
                             on_click=on_issues_click
                             icon=icondata::MdiGithub
                         >
                             "Known Issues"
                         </Button>
                         <Button
-                            size=ButtonSize::Tiny
+                            size=ButtonSize::Small
                             on_click=on_releases_click
                             icon=icondata::MdiGithub
                         >
@@ -894,7 +907,7 @@ pub fn About() -> impl IntoView {
                             fallback=move || {
                                 view! {
                                     <Button
-                                        size=ButtonSize::Tiny
+                                        size=ButtonSize::Small
                                         icon=icondata::MdiCheckCircleOutline
                                     >
                                         "You are already on the latest version"
@@ -913,7 +926,7 @@ pub fn About() -> impl IntoView {
                                     fallback=move || {
                                         view! {
                                             <Button
-                                                size=ButtonSize::Tiny
+                                                size=ButtonSize::Small
                                                 on_click=on_check_update_click
                                                 icon=icondata::MdiDownloadCircleOutline
                                             >
@@ -923,66 +936,70 @@ pub fn About() -> impl IntoView {
                                     }
                                 >
                                     <Button
-                                        size=ButtonSize::Tiny
+                                        size=ButtonSize::Small
                                         on_click=on_install_update_click
                                         icon=icondata::MdiInboxArrowDown
                                     >
                                         "Download and Install "
-                                        {{ installable_version }}
+                                        // {{ installable_version }}
                                     </Button>
                                 </Show>
                             </Show>
                         </Show>
                     </Space>
-                </CollapseItem>
-            </Collapse>
+                </AccordionItem>
+            </Accordion>
         </Layout>
-    }
+    };
+    var_name
 }
 
 /// Component for metrics
-#[component]
-pub fn Metrics() -> impl IntoView {
-    log::debug!("Metrics");
-    let (metrics, set_metrics) = create_signal(Vec::new());
-    create_resource(move || set_metrics, listen_on_metrics_event);
-    log::debug!("Metrics view");
-    view! {
-        <Layout style="padding: 10px;">
-            <Collapse accordion=true>
-                <CollapseItem title="mDNS-SD-metrics" key="metrics">
-                    <Space vertical=true>
-                        <Table>
-                            <thead>
-                                <tr>
-                                    <th>"Metric"</th>
-                                    <th>"Counter"</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {move || {
-                                    metrics
-                                        .get()
-                                        .into_iter()
-                                        .map(|(k, v)| {
-                                            view! {
-                                                <tr>
-                                                    <td>{k}</td>
-                                                    <td>{v}</td>
-                                                </tr>
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                }}
-                            </tbody>
-                        </Table>
-                    </Space>
-                </CollapseItem>
-            </Collapse>
-        </Layout>
-    }
-}
-
+// #[component]
+// pub fn Metrics() -> impl IntoView {
+//     log::debug!("Metrics");
+//     let (metrics, set_metrics) = signal(Vec::new());
+//     LocalResource::new(move || listen_on_metrics_event(set_metrics));
+//     log::debug!("Metrics view");
+//     view! {
+//         <Layout>
+//             <Accordion>
+//                 <AccordionItem value="metrics">
+//                     <AccordionHeader slot>
+//                         "mDNS-SD-metrics"
+//                     </AccordionHeader>
+//                     <Space vertical=true>
+//                         <Table>
+//                             <thead>
+//                                 <tr>
+//                                     <th>"Metric"</th>
+//                                     <th>"Counter"</th>
+//                                 </tr>
+//                             </thead>
+//                             <tbody>
+//                                 {move || {
+//                                     metrics
+//                                         .get()
+//                                         .into_iter()
+//                                         .map(|(k, v)| {
+//                                             view! {
+//                                                 <tr>
+//                                                     <td>{k}</td>
+//                                                     <td>{v}</td>
+//                                                 </tr>
+//                                             }
+//                                         })
+//                                         .collect::<Vec<_>>()
+//                                 }}
+//                             </tbody>
+//                         </Table>
+//                     </Space>
+//                 </AccordionItem>
+//             </Accordion>
+//         </Layout>
+//     }
+// }
+//
 #[derive(Clone, Debug)]
 pub struct IsDesktopSignal(RwSignal<bool>);
 
@@ -996,20 +1013,21 @@ async fn get_is_desktop(writer: RwSignal<bool>) {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
-    let theme = create_rw_signal(Theme::dark());
-    let is_desktop = create_rw_signal(false);
-    create_resource(move || is_desktop, get_is_desktop);
+    let theme = RwSignal::new(Theme::dark());
+    let is_desktop = RwSignal::new(false);
+    LocalResource::new(move || get_is_desktop(is_desktop));
     provide_context(IsDesktopSignal(is_desktop));
     view! {
-        <ThemeProvider theme>
+        <ConfigProvider theme=theme>
+        <ToasterProvider>
             <Suspense fallback=|| view! { <Text>"Loading"</Text> }>
-                <GlobalStyle />
                 <Show when=move || { is_desktop.get() } fallback=|| view! { <div /> }>
                     <About />
                 </Show>
-                <Metrics />
+                // <Metrics />
                 <Browse />
             </Suspense>
-        </ThemeProvider>
+        </ToasterProvider>
+        </ConfigProvider>
     }
 }
