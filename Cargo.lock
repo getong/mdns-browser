@@ -2927,7 +2927,6 @@ dependencies = [
  "rstml",
  "server_fn_macro",
  "syn 2.0.93",
- "tracing",
  "uuid",
 ]
 
@@ -4078,7 +4077,7 @@ dependencies = [
  "proc-macro-error-attr2",
  "proc-macro2",
  "quote",
- "syn 2.0.91",
+ "syn 2.0.93",
 ]
 
 [[package]]
@@ -4371,7 +4370,7 @@ dependencies = [
  "proc-macro-error2",
  "proc-macro2",
  "quote",
- "syn 2.0.91",
+ "syn 2.0.93",
 ]
 
 [[package]]
@@ -4628,12 +4627,6 @@ dependencies = [
  "rustls-pki-types",
  "untrusted",
 ]
-
-[[package]]
-name = "rustversion"
-version = "1.0.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7c45b9784283f1b2e7fb61b42047c2fd678ef0960d4f6f1eba131594cc369d4"
 
 [[package]]
 name = "ryu"
@@ -5731,7 +5724,7 @@ checksum = "5af50a5123e480e7ee8961e6456f63530816875d0a19cb73060b8e61dd2a95fb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.91",
+ "syn 2.0.93",
 ]
 
 [[package]]
