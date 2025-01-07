@@ -1,7 +1,8 @@
 mod app;
 
 use app::*;
-use leptos::*;
+use leptos::mount::mount_to_body;
+use leptos::prelude::*;
 
 fn main() {
     let _ = console_log::init_with_level(log::Level::Debug);
